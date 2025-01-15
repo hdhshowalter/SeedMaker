@@ -1,0 +1,8 @@
+^renv$
+^renv\.lock$
+^SeedMaker_os\.Rproj$
+^\.Rproj\.user$
+^scratch$
+^LICENSE\.md$
+^\.github$
+^README\.Rmd$

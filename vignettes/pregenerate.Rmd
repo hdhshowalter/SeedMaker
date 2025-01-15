@@ -1,0 +1,321 @@
+---
+title: "Pre-generate seeds with {SeedMaker}"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Pre-generate seeds with {SeedMaker}}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Introduction
+
+Reproducibility is a cornerstone of the scientific method and increasingly expected when it comes to computation. Many elements of statistical research require the use of random components, including trial simulation. Consequently, the practice of setting seeds is a critical prerequisite to ensuring the exact same sequence of random numbers is generated each time code is run. There is, however, much nuance to be considered when settings seeds, especially if multiple random components are utilized.
+
+## Simple Motivating Example
+
+Suppose you need to generate a set of 10 virtual subject responses (VSRs) for each of 5 simulations. The undisciplined approach neglects to set a seed to ensure reproducibility on future runs:
+
+``` {r, message = FALSE}
+library(SeedMaker)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(rlang)
+
+n_sims <- 5
+n_subjects <- 10
+mu <- 25
+sigma <- 5
+
+params <- tibble(
+  n_subjects = !!n_subjects,
+  mu = !!mu,
+  sigma = !!sigma
+)
+
+y_gen <- function(n_subjects, mu, sigma) {
+  rnorm(n_subjects, mu, sigma)
+}
+
+vsrs1 <- params %>%
+  bind_cols(tibble(sim = paste0("sim", 1:!!n_sims))) %>%
+  relocate(sim) %>%
+  rowwise() %>%
+  mutate(y = list(y_gen(!!n_subjects, !!mu, !!sigma))) %>%
+  ungroup()
+
+str(vsrs1)
+```
+
+When the code is executed again, it produces a different collection of VSRs:
+
+``` {r}
+vsrs1_save <- vsrs1
+
+vsrs1 <- params %>%
+  bind_cols(tibble(sim = paste0("sim", 1:!!n_sims))) %>%
+  relocate(sim) %>%
+  rowwise() %>%
+  mutate(y = list(y_gen(!!n_subjects, !!mu, !!sigma))) %>%
+  ungroup()
+
+str(vsrs1)
+
+identical(vsrs1_save, vsrs1)
+```
+
+A disciplined approach sets a seed before generating the VSRs:
+
+``` {r}
+set.seed(1234)
+
+vsrs2 <- params %>%
+  bind_cols(tibble(sim = paste0("sim", 1:!!n_sims))) %>%
+  relocate(sim) %>%
+  rowwise() %>%
+  mutate(y = list(y_gen(!!n_subjects, !!mu, !!sigma))) %>%
+  ungroup()
+
+str(vsrs2)
+```
+
+When the code is executed again, it produces the same collection of VSRs:
+
+``` {r}
+vsrs2_save <- vsrs2
+
+set.seed(1234)
+
+vsrs2 <- params %>%
+  bind_cols(tibble(sim = paste0("sim", 1:!!n_sims))) %>%
+  relocate(sim) %>%
+  rowwise() %>%
+  mutate(y = list(y_gen(!!n_subjects, !!mu, !!sigma))) %>%
+  ungroup()
+
+str(vsrs2)
+
+identical(vsrs2_save, vsrs2)
+```
+
+## Limitations
+
+Although reproducibility has been attained, the drawback to this approach is that, because the inner workings of the pseudo random number generator are not readily available, there is not a good way to isolate and reproduce the set of VSRs for a single simulation only. For instance, to reproduce the *sim5* values, *sim1* - *sim4* values must be reproduced as well. In this toy example, it is computationally inexpensive to do just that, but envision a more robust simulation project wherein hundreds of thousands of simulations are run, each of which generates thousands of VSRs. In all likelihood said VSRs are being modeled or summarized to answer the overarching question posed by the project. What happens if an error manifests when performing that analysis in simulation 100K? Do you really want to re-run 99K simulations in order to reproduce the VSR set for sim 100K for closer inspection?!
+
+## Solution
+
+{SeedMaker} solves this problem by pre-generating a seed for each simulation (using the `seed_maker()` function) instead of relying on a single single seed for the entire collection[^1]:
+
+``` {r}
+seeds <- seed_maker(
+  seed = 1234,
+  level_names = "sim",
+  n_per_level = n_sims
+)
+
+print(seeds)
+
+vsrs3 <- params %>%
+  bind_cols(enframe(seeds, name = "sim", value = "seed")) %>%
+  relocate(sim) %>%
+  unnest("seed") %>%
+  rowwise() %>%
+  mutate(y = list(exec(
+    .fn = function(n_subjects, mu, sigma, seed) {
+      set.seed(seed)
+      y_gen(n_subjects, mu, sigma)
+    },
+    n_subjects = .data$n_subjects,
+    mu = .data$mu,
+    sigma = .data$sigma,
+    seed = .data$seed
+  ))) %>%
+  ungroup()
+
+str(vsrs3)
+```
+
+Now the seed associated with *sim5* can be used to reproduce those VSRs directly:
+
+``` {r}
+set.seed(seeds[["sim5"]])
+
+y_sim5 <- y_gen(n_subjects, mu, sigma)
+
+print(y_sim5)
+
+identical(
+  vsrs3 %>%
+    filter(sim == "sim5") %>%
+    unnest(y) %>%
+    pull(y),
+  y_sim5
+)
+```
+
+## A Slightly More Complex Example
+
+Now suppose the 10 VSRs (per simulation) are produced by first making a random assignment to one of two treatment arms, each of which is associated with a different true mu, and then generating a response based on said assignment. This *can* be accomplished with the (basic) set of seeds that were previously pre-generated with `seed_maker()`:
+
+``` {r}
+n_treats <- 2
+mu1 <- 25
+mu2 <- 35
+
+params_complex <- tibble(
+  treat_id = seq_len(!!n_treats),
+  mu = c(!!mu1, !!mu2),
+  sigma = rep(!!sigma, !!n_treats)
+)
+
+vsrs4 <- params_complex %>%
+  nest(params = everything()) %>%
+  bind_cols(enframe(seeds, name = "sim", value = "seed")) %>%
+  relocate(sim) %>%
+  unnest("seed") %>%
+  mutate(n_subjects = !!n_subjects) %>%
+  relocate(n_subjects, .after = sim) %>%
+  rowwise() %>%
+  mutate(y = list(exec(
+    .fn = function(n_subjects, params, seed) {
+      set.seed(seed)
+      vsrs <-
+        tibble(
+          treat_id = sapply(
+            seq_len(n_subjects),
+            function(x) sample(params %>% pull(treat_id), 1)
+          )
+        ) %>%
+        left_join(
+          params,
+          by = "treat_id"
+        ) %>%
+        rowwise() %>%
+        mutate(y = y_gen(1, mu, sigma)) %>%
+        ungroup() %>%
+        mutate(replicate = paste0("replicate", row_number())) %>%
+        relocate(replicate)
+    },
+    n_subjects = .data$n_subjects,
+    params = .data$params,
+    seed = .data$seed
+  ))) %>%
+  ungroup() %>%
+  select(- params)
+
+str(vsrs4)
+```
+
+As before, the seed associated with *sim5* can be used to reproduce those VSRs directly:
+
+``` {r}
+set.seed(seeds[["sim5"]])
+
+y_complex_sim5 <-
+  tibble(
+    treat_id = sapply(
+      seq_len(!!n_subjects),
+      function(x) sample(params_complex %>% pull(treat_id), 1)
+    )
+  ) %>%
+  left_join(
+    params_complex,
+    by = "treat_id"
+  ) %>%
+  rowwise() %>%
+  mutate(y = y_gen(1, mu, sigma)) %>%
+  ungroup() %>%
+  mutate(replicate = paste0("replicate", row_number())) %>%
+  select(replicate, treat_id, y)
+
+print(y_complex_sim5)
+
+identical(
+  vsrs4 %>%
+    filter(sim == "sim5") %>%
+    unnest(y) %>%
+    select(replicate, treat_id, y),
+  y_complex_sim5
+)
+```
+
+What if, however, you are interested in reproducing the value of just a single replicate? You are fundamentally in the [same situation described earlier](#limitations) since the random treatment arm assignment is entangled with the random VSR generation. In other words, to reproduce the *replicate10* value, *replicate1* - *replicate9* values must be reproduced as well. Fortunately, `seed_maker()` can be called in a manner that pre-generates an even more comprehensive set of seeds:
+
+``` {r}
+seeds_complex <- seed_maker(
+  seed = 1234,
+  level_names = c("sim", "replicate"),
+  n_per_level = c(n_sims, n_subjects)
+)
+
+str(seeds_complex)
+
+vsrs5 <- enframe(seeds_complex, name = "sim", value = "seeds") %>%
+  rowwise() %>%
+  mutate(int = list(enframe(seeds, name = "replicate", value = "seed"))) %>%
+  ungroup() %>%
+  unnest(int) %>%
+  select(- seeds) %>%
+  rowwise() %>%
+  mutate(y = list(exec(
+    .fn = function(seed) {
+      set.seed(seed)
+      vsrs <-
+        tibble(
+          treat_id = sample(!!params_complex %>% pull(treat_id), 1)
+        )  %>%
+        left_join(
+          !!params_complex,
+          by = "treat_id"
+        ) %>%
+        mutate(y = y_gen(1, mu, sigma))
+    },
+    seed = .data$seed
+  ))) %>%
+  ungroup() %>%
+  unnest("y") %>%
+  nest(y = c("replicate", "seed", "treat_id", "mu", "sigma", "y"), .by = "sim")
+
+str(vsrs5)
+```
+
+This time, the seed associated with *sim5, replicate10* can be used to reproduce that VSR directly:
+
+``` {r}
+set.seed(seeds_complex[["sim5"]][["replicate10"]])
+
+y_complex_sep_sim5 <-
+  tibble(
+    treat_id = sample(params_complex %>% pull(treat_id), 1)
+  )  %>%
+  left_join(
+    params_complex,
+    by = "treat_id"
+  ) %>%
+  mutate(y = y_gen(1, mu, sigma)) %>%
+  select(treat_id, y)
+
+print(y_complex_sep_sim5)
+
+identical(
+  vsrs5 %>%
+    filter(sim == "sim5") %>%
+    unnest(y) %>%
+    filter(replicate == "replicate10") %>%
+    select(treat_id, y),
+  y_complex_sep_sim5
+)
+```
+
+## Summary
+
+Though it might seem like overkill, taking the time to consider all sources of randomness, pre-generating seeds for each, and then carefully incorporating said seeds into simulation/analysis pipelines has downstream benefits. Not only is reproducibility attained at the project level, but at the elemental level as well. This often proves to be extremely useful when balancing computational resource constraints versus the ability to drill down to a granular level when debugging/troubleshooting.
+
+[^1]: For completeness, it is acknowledged that an alternative approach to solving this problem is to retain all of the VSRs in external files. For modestly-sized projects, this might be the most straightforward way to proceed. Operationally speaking, however, doing so is not only unnecessary, but undesirable from both a file storage and I/O perspective. For larger projects in particular, it is preferable to utilize the VSRs in memory, retaining the (much smaller) modeled/summarized results only.

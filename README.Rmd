@@ -1,0 +1,86 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%",
+  echo = TRUE
+)
+```
+
+# SeedMaker
+
+<!-- badges: start -->
+[![R-CMD-check](https://github.com/hdhshowalter/SeedMaker/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/hdhshowalter/SeedMaker/actions/workflows/R-CMD-check.yaml)
+[![test-coverage](https://github.com/hdhshowalter/SeedMaker/actions/workflows/test-coverage.yaml/badge.svg)](https://github.com/hdhshowalter/SeedMaker/actions/workflows/test-coverage.yaml)
+[![lint](https://github.com/hdhshowalter/SeedMaker/actions/workflows/lint.yaml/badge.svg)](https://github.com/hdhshowalter/SeedMaker/actions/workflows/lint.yaml)
+<!-- badges: end -->
+
+{SeedMaker} is a mechanism for easily generating and organizing a collection of seeds from a single seed, which may be subsequently used to ensure reproducibility in processes/pipelines that utilize multiple random components (e.g., trial simulation).
+
+## Installation
+
+Install the released version of {SeedMaker} from CRAN:
+
+``` r
+install.packages("SeedMaker")
+```
+
+Or install the development version of {SeedMaker} from [GitHub](https://github.com/) with:
+
+``` r
+# install.packages("remotes")
+remotes::install_github("hdhshowalter/SeedMaker")
+```
+
+## Examples
+
+The following calls are representative of the most common ways to engage `seed_maker()`:
+
+``` {r}
+library(SeedMaker)
+
+#simple call
+seed_maker(
+  seed = 1234,
+  level_names = "sim",
+  n_per_level = 5
+)
+
+#slightly more complex call
+seed_maker(
+  seed = 1234,
+  level_names = c("sim", "replicate"),
+  n_per_level = c(5, 10)
+)
+
+#slightly more complex call with non-indexed names at level 2
+seed_maker(
+  seed = 1234,
+  level_names = list("sim", c("component_a", "component_b", "component_c")),
+  n_per_level = c(5, 3)
+)
+
+#simple call that generates seed values between 1 and 100 instead of between
+#1 and 1000000
+seed_maker(
+  seed = 1234,
+  level_names = "sim",
+  n_per_level = 5,
+  sample_vector = list(1:100)
+)
+
+#simple call that returns named vector instead of list
+seed_maker(
+  seed = 1234,
+  level_names = "sim",
+  n_per_level = 5,
+  flatten = TRUE
+)
+```
