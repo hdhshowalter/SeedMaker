@@ -6,7 +6,7 @@
 \alias{SeedMaker-package}
 \title{SeedMaker: Generate a Collection of Seeds from a Single Seed}
 \description{
-A mechanism for easily generating and organizing a collection of seeds from a single seed, which may be subsequently used to ensure reproducibility in processes/pipelines that utilize multiple random components (e.g., trial simluation).
+A mechanism for easily generating and organizing a collection of seeds from a single seed, which may be subsequently used to ensure reproducibility in processes/pipelines that utilize multiple random components (e.g., trial simulation).
 }
 \seealso{
 Useful links:
