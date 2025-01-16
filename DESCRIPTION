@@ -1,5 +1,5 @@
 Package: SeedMaker
-Title: Generate a Collection of Seeds From a Single Seed
+Title: Generate a Collection of Seeds from a Single Seed
 Version: 1.0.0
 Authors@R: c(
     person(given = "Hollins",
